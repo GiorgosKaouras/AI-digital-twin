@@ -3,3 +3,5 @@
 __pycache__/
 *.pyc
 vector_store/
+.venvsource/
+.DS_Store
