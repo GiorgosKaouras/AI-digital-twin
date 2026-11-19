@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+backend/data/uploads/
+backend/data/*.sqlite3
+backend/data/*.db
+# Local environment files can contain API keys; keep the example file versionable.
+.env
+.env.*
+!.env.example
