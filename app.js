@@ -1,4 +1,16 @@
 const app = document.querySelector('#app');
+const initialParams = new URLSearchParams(location.search);
+const startOnboarding = initialParams.get('onboarding') === '1';
+const legacyOnboardingUrl = initialParams.get('start') === 'onboarding';
+if (startOnboarding || legacyOnboardingUrl) {
+  localStorage.setItem('echoOnboardingDeferred', 'true');
+  history.replaceState(null, '', location.pathname);
+}
+if (startOnboarding) {
+  localStorage.removeItem('twinName');
+  localStorage.removeItem('echoPersona');
+}
+const onboardingDeferred = localStorage.getItem('echoOnboardingDeferred') === 'true';
 const sections = [
   { id: 'Connection', label: 'Διασύνδεση' },
   { id: 'Guidance', label: 'Καθοδήγηση' },
@@ -7,24 +19,36 @@ const sections = [
   { id: 'Graph', label: 'Γράφος' },
 ];
 const twinName = 'Echo';
+const guidanceSessionId = (() => {
+  let id = localStorage.getItem('echoGuidanceSessionId');
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem('echoGuidanceSessionId', id);
+  }
+  return id;
+})();
 const state = {
-  step: localStorage.getItem('twinName') ? 'main' : 'welcome',
-  name: localStorage.getItem('twinName') || '',
+  step: startOnboarding ? 'intro' : 'main',
+  name: startOnboarding ? '' : (localStorage.getItem('twinName') || ''),
+  introIndex: 0,
+  introLocked: true,
   onboardingIndex: 0,
   onboardingAnswers: [],
   onboardingFacts: [],
-  section: 'Add',
+  onboardingProgressFrom: null,
+  onboardingCvError: '',
+  section: localStorage.getItem('echoLastSection') || (onboardingDeferred ? 'Profile' : 'Add'),
   showFirstFilePrompt: false,
   // Νέο κλειδί ώστε να εμφανιστεί η ενημερωμένη περιήγηση και σε υπάρχοντες δοκιμαστικούς χρήστες.
   tour: localStorage.getItem('twinTourCompleteV3') ? null : 'Add',
 };
 
 const onboardingQuestions = [
-  { category: 'work', title: 'Με τι ασχολείσαι επαγγελματικά;', choices: ['Εργάζομαι σε εταιρεία', 'Ελεύθερος επαγγελματίας', 'Σπουδάζω', 'Αναζητώ εργασία', 'Έχω δική μου επιχείρηση'] },
-  { category: 'skills', title: 'Ποιες δεξιότητες ή εμπειρίες θέλεις να γνωρίζει ο Echo;', choices: ['Επικοινωνία', 'Οργάνωση', 'Ανάλυση και επίλυση προβλημάτων', 'Τεχνολογία', 'Δημιουργικότητα', 'Συνεργασία'] },
-  { category: 'interests', title: 'Τι σε ενδιαφέρει;', choices: ['Τεχνολογία', 'Επιχειρηματικότητα', 'Τέχνη και σχεδιασμός', 'Αθλητισμός', 'Βιβλία και μάθηση', 'Προσφορά στην κοινότητα'] },
-  { category: 'values', title: 'Τι είναι σημαντικό για σένα στη δουλειά ή στη ζωή;', choices: ['Συνεχής μάθηση', 'Συνεργασία', 'Δημιουργικότητα', 'Ισορροπία', 'Σταθερότητα', 'Θετικός αντίκτυπος'] },
-  { category: 'goals', title: 'Σε τι θα ήθελες να σε βοηθά ο Echo;', choices: ['Επαγγελματική εξέλιξη', 'Οργάνωση και προγραμματισμός', 'Λήψη αποφάσεων', 'Εκμάθηση νέων πραγμάτων', 'Επικοινωνία', 'Ανάπτυξη ιδεών'] },
+  { category: 'preferences', key: 'risk_tolerance', title: 'Μια νέα ευκαιρία μπορεί να πάει χαμένη, αλλά αν πετύχει να αλλάξει πολλά για σένα. Τι κάνεις;', choices: [['Αφοσιώνομαι πλήρως, αξίζει το ρίσκο.', 'high_risk'], ['Τη δοκιμάζω σε μικρή κλίμακα πρώτα.', 'calculated_risk'], ['Επιλέγω κάτι πιο σίγουρο.', 'low_risk']] },
+  { category: 'work', key: 'work_role', title: 'Το σύστημα καταρρέει λίγο πριν την παράδοση. Πού εστιάζεις;', choices: [['Κόβω λειτουργίες και παραδίδω εγκαίρως.', 'deadline_delivery'], ['Λύνω τη βασική αιτία, ακόμη κι αν καθυστερήσουμε.', 'root_cause'], ['Διαπραγματεύομαι νέο σχέδιο με τους εμπλεκόμενους.', 'stakeholder_plan']] },
+  { category: 'goals', key: 'primary_goal', title: 'Τι θα επέλεγες για τα επόμενα τρία χρόνια;', choices: [['Περισσότερα χρήματα και υψηλή θέση.', 'income_status'], ['Ελευθερία χρόνου, με μέτριο εισόδημα.', 'time_freedom'], ['Δημιουργία με αντίκτυπο και μεγάλο ρίσκο.', 'impact_risk']] },
+  { category: 'values', key: 'ethics_value', title: 'Ένας φίλος στη δουλειά έκανε ένα λάθος που μπορεί να κοστίσει στην ομάδα ένα σημαντικό project. Αν το παραδεχτεί, ίσως χάσει τη δουλειά του. Τι κάνεις;', choices: [['Τον βοηθώ να το διορθώσει πριν το μάθει κάποιος.', 'fix_silently'], ['Του ζητώ να το παραδεχτεί ο ίδιος.', 'ask_own_up'], ['Ενημερώνω αμέσως τον προϊστάμενο.', 'tell_manager']] },
+  { category: 'preferences', key: 'thinking_style', title: 'Τα δεδομένα λένε «προχώρα», αλλά το ένστικτό σου διαφωνεί. Τι κάνεις;', choices: [['Ακολουθώ τα δεδομένα.', 'analytical'], ['Ψάχνω τι μπορεί να λείπει.', 'investigate'], ['Εμπιστεύομαι την εμπειρία μου.', 'intuitive']] },
 ];
 
 const profileCategoryLabels = { work: 'Εργασία', skills: 'Δεξιότητες', experience: 'Εμπειρία', education: 'Εκπαίδευση', interests: 'Ενδιαφέροντα', values: 'Αξίες', preferences: 'Προτιμήσεις', goals: 'Στόχοι' };
@@ -238,40 +262,73 @@ function showModeSwitchConfirmation(mode, onConfirm) {
 }
 
 function renderWelcome() {
-  app.innerHTML = `
-    <section class="welcome">
-      <div class="welcome-card">
-        <div class="eyebrow">Ο προσωπικός σου AI σύντροφος</div>
-        <h1>Καλώς ήρθες στον AI εαυτό σου</h1>
-        <p class="description">&nbsp;</p>
-        <button class="button-primary" id="next">Επόμενο <span aria-hidden="true">→</span></button>
-      </div>
-    </section>`;
-  document.querySelector('#next').addEventListener('click', () => {
-    state.step = 'name';
-    render();
-  });
+  const slides = [
+    '<div class="intro-stack"><h1 class="intro-title intro-rise">Καλώς ήρθες στο <span class="echo-word">Echo,</span></h1><h2 class="intro-subtitle intro-from-bottom">τον ψηφιακό σου εαυτό</h2></div>',
+    '<h1 class="intro-statement intro-reveal">Ο <span class="echo-word">Echo</span> είναι ο προσωπικός σου AI εκπρόσωπος. Μαθαίνει από εσένα, σε βοηθά να οργανώνεις τις εμπειρίες σου, να παίρνεις συμβουλές και να δικτυώνεσαι.</h1>',
+    '<h1 class="intro-statement intro-reveal">Πριν συνεχίσεις, ο Echo θα ήθελε να σε γνωρίσει <span class="echo-word">καλύτερα…</span></h1>',
+  ];
+  app.innerHTML = `<section class="intro-screen" role="button" tabindex="0" aria-label="Συνέχεια στην παρουσίαση"><div class="intro-content" aria-live="polite">${slides[state.introIndex]}</div><p class="intro-prompt">Κάνε κλικ οπουδήποτε για να συνεχίσεις</p></section>`;
+  const screen = document.querySelector('.intro-screen');
+  const advance = () => {
+    if (state.introLocked) return;
+    state.introLocked = true;
+    const goNext = () => {
+      if (state.introIndex < slides.length - 1) {
+        state.introIndex += 1;
+        renderWelcome();
+      } else { state.step = 'name'; render(); }
+    };
+    if (state.introIndex >= 1) {
+      document.querySelector('.intro-content').classList.add('intro-exit');
+      setTimeout(goNext, 560);
+    } else goNext();
+  };
+  screen.addEventListener('click', advance);
+  screen.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); advance(); } });
+  if (state.introIndex === 1) {
+    const copy = 'Ο Echo είναι ο προσωπικός σου AI εκπρόσωπος. Μαθαίνει από εσένα, σε βοηθά να οργανώνεις τις εμπειρίες σου, να παίρνεις συμβουλές και να δικτυώνεσαι.';
+    const heading = document.querySelector('.intro-statement');
+    heading.innerHTML = '<span class="intro-typewriter"><span id="intro-typed-copy"></span></span>';
+    const output = document.querySelector('#intro-typed-copy');
+    let position = 0;
+    const typeTimer = setInterval(() => {
+      position += 1;
+      output.innerHTML = escapeHtml(copy.slice(0, position)).replace('Echo', '<span class="echo-word">Echo</span>');
+      if (position >= copy.length) {
+        clearInterval(typeTimer);
+        setTimeout(() => { state.introLocked = false; }, 500);
+      }
+    }, 32);
+  } else setTimeout(() => { state.introLocked = false; }, state.introIndex === 0 ? 2500 : 1500);
 }
 
 function renderNameStep() {
   app.innerHTML = `
     <section class="name-step">
       <div class="name-card">
-        <div class="eyebrow">Γνώρισε τον Echo</div>
-        <h1>Είμαι ο Echo, ο AI κλώνος σου.</h1>
-        <p class="subheading">Πώς θέλεις να σε αποκαλώ όταν σου μιλάω;</p>
+        <h1 id="name-greeting">Ας γνωριστούμε</h1>
+        <p class="subheading">Πώς θέλεις να σε αποκαλώ;</p>
         <form id="name-form">
-          <label for="preferred-name">Το όνομα που προτιμάς</label>
-          <input id="preferred-name" name="name" autocomplete="given-name" required maxlength="48" placeholder="Γράψε το όνομά σου">
-          <p id="name-error" class="form-error" aria-live="polite"></p>
-          <button class="button-primary" type="submit">Συνέχεια <span aria-hidden="true">→</span></button>
+          <input id="preferred-name" name="name" autocomplete="given-name" maxlength="48" placeholder="Όνομα χρήστη" aria-describedby="name-error name-note" aria-invalid="false">
+          <p id="name-error" class="name-error" aria-live="polite"></p>
+          <p id="name-note" class="onboarding-reassurance">Το όνομα χρήστη θα μπορείς να το αλλάξεις αργότερα.</p>
+          <button class="button-primary" type="submit">Επόμενο <span aria-hidden="true">→</span></button>
         </form>
       </div>
     </section>`;
   document.querySelector('#name-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     state.name = new FormData(event.currentTarget).get('name').trim();
-    if (!state.name) return;
+    if (!state.name) {
+      const input = document.querySelector('#preferred-name');
+      input.setAttribute('aria-invalid', 'true');
+      document.querySelector('#name-error').textContent = 'Το πεδίο είναι υποχρεωτικό.';
+      input.classList.remove('name-invalid-shake');
+      void input.offsetWidth;
+      input.classList.add('name-invalid-shake');
+      input.focus();
+      return;
+    }
     const button = document.querySelector('#name-form button');
     button.disabled = true;
     try {
@@ -282,7 +339,11 @@ function renderNameStep() {
       state.onboardingIndex = 0;
       state.onboardingAnswers = [];
       state.onboardingFacts = [];
-      state.step = 'onboarding';
+      state.step = startOnboarding ? 'onboarding' : 'main';
+      if (!startOnboarding) {
+        state.section = 'Profile';
+        localStorage.setItem('echoLastSection', 'Profile');
+      }
       render();
     } catch (error) {
       const message = document.querySelector('#name-error');
@@ -290,15 +351,18 @@ function renderNameStep() {
       button.disabled = false;
     }
   });
+  document.querySelector('#preferred-name').addEventListener('input', () => {
+    document.querySelector('#preferred-name').setAttribute('aria-invalid', 'false');
+    document.querySelector('#name-error').textContent = '';
+  });
 }
 
 function onboardingFactsForCurrentStep(form) {
   const question = onboardingQuestions[state.onboardingIndex];
-  const values = [...form.querySelectorAll('[name="onboarding-choice"]:checked')].map((input) => input.value);
-  const freeText = form.querySelector('#onboarding-other').value.split(/[\n;]+/).map((value) => value.trim()).filter(Boolean);
-  const additions = [...values, ...freeText].map((value) => ({ category: question.category, value }));
-  state.onboardingFacts = [...state.onboardingFacts.filter((fact) => fact.category !== question.category), ...additions];
-  state.onboardingAnswers[state.onboardingIndex] = { selected: values, other: form.querySelector('#onboarding-other').value };
+  const selected = form.querySelector('[name="onboarding-choice"]:checked');
+  const additions = selected ? [{ category: question.category, value: selected.dataset.label, key: question.key, code: selected.value }] : [];
+  state.onboardingFacts = [...state.onboardingFacts.filter((fact) => fact.key !== question.key), ...additions];
+  state.onboardingAnswers[state.onboardingIndex] = selected?.value || '';
 }
 
 async function saveOnboardingFacts(status) {
@@ -312,60 +376,95 @@ async function saveOnboardingFacts(status) {
   if (!response.ok) throw new Error(result.detail || 'Δεν αποθηκεύτηκαν οι απαντήσεις.');
 }
 
+function buildArchetypeLabel(persona) {
+  const role = { deadline_delivery: 'Προσανατολισμός στην παράδοση', root_cause: 'Εστίαση στη ριζική λύση', stakeholder_plan: 'Συντονισμός με εμπλεκόμενους' }[persona.work_role];
+  const risk = { high_risk: 'τολμηρή στάση', calculated_risk: 'υπολογισμένο ρίσκο', low_risk: 'προσεκτικές κινήσεις' }[persona.risk_tolerance];
+  const thinking = { analytical: 'αναλυτική σκέψη', investigate: 'διερευνητική σκέψη', intuitive: 'διαίσθηση και εμπειρία' }[persona.thinking_style];
+  return [role, risk, thinking].filter(Boolean).join(' · ');
+}
+
+function updateOnboardingProgress(completedQuestions) {
+  const progress = document.querySelector('.onboarding-progress');
+  const value = Math.max(0, Math.min(completedQuestions, onboardingQuestions.length));
+  progress.setAttribute('aria-valuenow', String(value));
+  progress.querySelector('span').style.width = `${(value / onboardingQuestions.length) * 100}%`;
+}
+
 function renderOnboarding() {
   const index = state.onboardingIndex;
   const question = onboardingQuestions[index];
-  const saved = state.onboardingAnswers[index] || { selected: [], other: '' };
+  const saved = state.onboardingAnswers[index] || '';
+  const progressFrom = state.onboardingProgressFrom ?? index;
+  state.onboardingProgressFrom = null;
   app.innerHTML = `
     <section class="welcome onboarding-screen">
       <div class="welcome-card onboarding-card">
-        <div class="eyebrow">Σύντομη γνωριμία · ${index + 1}/${onboardingQuestions.length}</div>
+        <div class="onboarding-step-count">${index + 1}/${onboardingQuestions.length}</div>
         <h1>Ας γνωριστούμε, ${escapeHtml(state.name)}</h1>
-        ${index === 0 ? '<p class="description">Οι απαντήσεις σου θα βοηθήσουν τον Echo να φτιάξει ένα αρχικό προσωπικό προφίλ. Μπορείς να το αλλάξεις ή να το διαγράψεις όποτε θέλεις.</p>' : ''}
-        <progress class="onboarding-progress" max="${onboardingQuestions.length}" value="${index + 1}"></progress>
+        <p class="onboarding-reassurance">Οι απαντήσεις σου δεν είναι μόνιμες· μπορείς να τις αλλάξεις ή να τις διαγράψεις στη συνέχεια.</p>
+        <div class="onboarding-progress" role="progressbar" aria-label="Πρόοδος ερωτήσεων" aria-valuemin="0" aria-valuemax="${onboardingQuestions.length}" aria-valuenow="${index}"><span style="width:${(progressFrom / onboardingQuestions.length) * 100}%"></span></div>
         <form id="onboarding-form">
           <h2>${escapeHtml(question.title)}</h2>
-          <div class="onboarding-options">${question.choices.map((choice) => `<label class="onboarding-option"><input type="checkbox" name="onboarding-choice" value="${escapeHtml(choice)}" ${saved.selected.includes(choice) ? 'checked' : ''}><span>${escapeHtml(choice)}</span></label>`).join('')}</div>
-          <label class="onboarding-free-label" for="onboarding-other">Άλλο ή κάτι ακόμη (προαιρετικό)</label>
-          <textarea id="onboarding-other" placeholder="Γράψε λίγες λέξεις αν θέλεις">${escapeHtml(saved.other)}</textarea>
+          <div class="onboarding-options">${question.choices.map(([choice, code]) => `<label class="onboarding-option"><input type="radio" name="onboarding-choice" value="${code}" data-label="${escapeHtml(choice)}" ${saved === code ? 'checked' : ''}><span>${escapeHtml(choice)}</span></label>`).join('')}</div>
           <p id="onboarding-error" class="form-error" aria-live="polite"></p>
           <div class="onboarding-actions">
             ${index > 0 ? '<button class="button-secondary" id="onboarding-back" type="button">Πίσω</button>' : ''}
-            <button class="button-secondary" id="onboarding-skip" type="button">Δεν θέλω να απαντήσω</button>
-            <button class="button-primary" id="onboarding-next" type="submit">${index === onboardingQuestions.length - 1 ? 'Σύνοψη' : 'Επόμενο'}</button>
+            <button class="button-primary" id="onboarding-next" type="submit" ${saved ? '' : 'disabled'}>${index === onboardingQuestions.length - 1 ? 'Επόμενο' : 'Επόμενο'}</button>
           </div>
-          <button class="text-button" id="onboarding-later" type="button">Θα το συμπληρώσω αργότερα</button>
         </form>
       </div>
     </section>`;
 
-  document.querySelector('#onboarding-form').addEventListener('submit', (event) => {
+  if (progressFrom !== index) {
+    const progressFill = document.querySelector('.onboarding-progress span');
+    void progressFill.offsetWidth;
+    requestAnimationFrame(() => { progressFill.style.width = `${(index / onboardingQuestions.length) * 100}%`; });
+  }
+
+  document.querySelector('#onboarding-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     onboardingFactsForCurrentStep(event.currentTarget);
-    if (state.onboardingIndex < onboardingQuestions.length - 1) state.onboardingIndex += 1;
-    else state.step = 'onboarding-summary';
-    render();
-  });
-  document.querySelector('#onboarding-skip').addEventListener('click', () => {
-    state.onboardingAnswers[index] = { selected: [], other: '' };
-    state.onboardingFacts = state.onboardingFacts.filter((fact) => fact.category !== question.category);
-    if (state.onboardingIndex < onboardingQuestions.length - 1) state.onboardingIndex += 1;
-    else state.step = 'onboarding-summary';
-    render();
-  });
-  document.querySelector('#onboarding-back')?.addEventListener('click', () => { state.onboardingIndex -= 1; render(); });
-  document.querySelector('#onboarding-later').addEventListener('click', async () => {
-    const error = document.querySelector('#onboarding-error');
-    const button = document.querySelector('#onboarding-later');
-    onboardingFactsForCurrentStep(document.querySelector('#onboarding-form'));
-    button.disabled = true;
-    try {
-      await saveOnboardingFacts('proposed');
-      state.onboardingFacts = [];
-      state.step = 'main';
-      state.section = 'Profile';
+    const form = event.currentTarget;
+    const controls = [...form.querySelectorAll('input, button')];
+    controls.forEach((control) => { control.disabled = true; });
+    if (state.onboardingIndex < onboardingQuestions.length - 1) {
+      state.onboardingProgressFrom = state.onboardingIndex;
+      state.onboardingIndex += 1;
       render();
-    } catch (saveError) { error.textContent = saveError.message || 'Δεν αποθηκεύτηκαν οι απαντήσεις.'; button.disabled = false; }
+    }
+    else {
+      state.onboardingFacts = state.onboardingFacts.filter((fact) => fact.key !== 'archetype_label');
+      const persona = Object.fromEntries(state.onboardingFacts.filter((fact) => fact.key).map((fact) => [fact.key, fact.code]));
+      persona.archetype_label = buildArchetypeLabel(persona);
+      state.onboardingFacts.push({ category: 'preferences', key: 'archetype_label', code: persona.archetype_label, value: `Αρχέτυπο: ${persona.archetype_label}` });
+      try {
+        updateOnboardingProgress(onboardingQuestions.length);
+        await saveOnboardingFacts('confirmed');
+        localStorage.setItem('echoPersona', JSON.stringify(persona));
+        state.onboardingFacts = [];
+        state.step = 'onboarding-cv';
+        render();
+      } catch (error) {
+        updateOnboardingProgress(onboardingQuestions.length - 1);
+        document.querySelector('#onboarding-error').textContent = error.message || 'Δεν αποθηκεύτηκε το προφίλ.';
+        controls.forEach((control) => { control.disabled = false; });
+      }
+    }
+  });
+  document.querySelectorAll('[name="onboarding-choice"]').forEach((radio) => radio.addEventListener('change', () => {
+    document.querySelector('#onboarding-next').disabled = false;
+    state.onboardingAnswers[index] = radio.value;
+  }));
+  document.querySelector('#onboarding-form').addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.target.name !== 'onboarding-choice') return;
+    event.preventDefault();
+    const next = document.querySelector('#onboarding-next');
+    if (!next.disabled) document.querySelector('#onboarding-form').requestSubmit();
+  });
+  document.querySelector('#onboarding-back')?.addEventListener('click', async (event) => {
+    state.onboardingProgressFrom = state.onboardingIndex;
+    state.onboardingIndex -= 1;
+    render();
   });
 }
 
@@ -392,8 +491,7 @@ function renderOnboardingSummary() {
     try {
       await saveOnboardingFacts('confirmed');
       state.onboardingFacts = [];
-      state.step = 'main';
-      state.section = 'Profile';
+      state.step = 'onboarding-cv';
       render();
     } catch (error) { document.querySelector('#summary-error').textContent = error.message || 'Δεν αποθηκεύτηκε το προφίλ.'; button.disabled = false; }
   });
@@ -404,11 +502,77 @@ function renderOnboardingSummary() {
       state.onboardingFacts = state.onboardingFacts.map((fact) => ({ ...fact, value: fact.value.trim() })).filter((fact) => fact.value);
       await saveOnboardingFacts('proposed');
       state.onboardingFacts = [];
-      state.step = 'main';
-      state.section = 'Profile';
+      state.step = 'onboarding-cv';
       render();
     } catch (error) { document.querySelector('#summary-error').textContent = error.message || 'Δεν αποθηκεύτηκαν οι απαντήσεις.'; button.disabled = false; }
   });
+}
+
+function renderOnboardingCv() {
+  app.innerHTML = `
+    <section class="welcome onboarding-screen"><div class="welcome-card onboarding-card">
+      <h1>Ας γνωριστούμε · Τελικό βήμα</h1>
+      <h2>Βοήθησέ μας να σε μάθουμε καλύτερα</h2>
+      <p class="description">Το CV σου βοηθά τον <span class="echo-word">Echo</span> να καταλάβει την επαγγελματική σου πορεία. Ανέβασε αρχείο PDF/TXT ή επικόλλησε το κείμενο.</p>
+      <form id="onboarding-cv-form"><label for="onboarding-cv-file">Επίλεξε αρχείο PDF ή TXT</label><input type="file" id="onboarding-cv-file" accept=".txt,.pdf,text/plain,application/pdf">
+      <label for="onboarding-cv-text">Ή επικόλλησε εδώ το κείμενο του CV σου</label><textarea id="onboarding-cv-text" rows="6" placeholder="Επικόλληση..."></textarea>
+      <p class="cv-privacy-message" id="onboarding-cv-mode">Έλεγχος ενεργής λειτουργίας…</p>
+      <p id="onboarding-cv-error" class="form-error" aria-live="polite">${escapeHtml(state.onboardingCvError)}</p>
+      <div class="onboarding-actions"><button class="button-secondary" type="button" id="onboarding-cv-later">Αργότερα</button><button class="button-primary" id="onboarding-cv-submit" type="submit" disabled>Δημιουργία προφίλ</button></div></form>
+    </div></section>`;
+  const file = document.querySelector('#onboarding-cv-file');
+  const text = document.querySelector('#onboarding-cv-text');
+  const submit = document.querySelector('#onboarding-cv-submit');
+  let cloudUnavailable = false;
+  const update = () => { submit.disabled = cloudUnavailable || (!file.files.length && !text.value.trim()); };
+  Promise.resolve(fetch('/api/config').then((r) => r.json())).then((config) => {
+    cloudUnavailable = config.mode === 'openai' && !config.openai_available;
+    const modeNotice = document.querySelector('#onboarding-cv-mode');
+    modeNotice.textContent = config.mode === 'openai'
+      ? `Cloud με OpenAI: το κείμενο θα σταλεί στην OpenAI για εξαγωγή προτάσεων και μπορεί να υπάρξει χρέωση. Το αρχικό αρχείο δεν αποθηκεύεται.${cloudUnavailable ? ' Η Cloud λειτουργία χρειάζεται ρύθμιση από την ομάδα.' : ''}`
+      : '';
+    modeNotice.hidden = config.mode !== 'openai';
+    update();
+  }).catch(() => { document.querySelector('#onboarding-cv-mode').textContent = 'Δεν ήταν δυνατός ο έλεγχος ενεργής λειτουργίας.'; });
+  file.addEventListener('change', update); text.addEventListener('input', update);
+  document.querySelector('#onboarding-cv-later').addEventListener('click', () => { state.step = 'main'; state.section = 'Profile'; localStorage.setItem('echoLastSection', 'Profile'); render(); });
+  document.querySelector('#onboarding-cv-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData();
+    if (file.files.length) data.append('file', file.files[0]); else data.append('cv_text', text.value);
+    state.onboardingCvError = '';
+    state.step = 'onboarding-cv-loading';
+    state.onboardingCvLoading = 'loading';
+    state.onboardingCvResult = '';
+    render();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      const response = await fetch('/api/profile/cv?privacy_ack=true', { method: 'POST', body: data });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || 'Δεν αναλύθηκε το CV.');
+      state.onboardingCvLoading = 'complete';
+      render();
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      state.step = 'main'; state.section = 'Profile'; localStorage.setItem('echoLastSection', 'Profile'); render();
+    } catch (error) {
+      state.onboardingCvLoading = 'error';
+      state.onboardingCvError = error.message || 'Δεν αναλύθηκε το CV.';
+      render();
+    }
+  });
+}
+
+function renderOnboardingCvLoading() {
+  const complete = state.onboardingCvLoading === 'complete';
+  const failed = state.onboardingCvLoading === 'error';
+  app.innerHTML = `
+    <section class="welcome onboarding-screen"><div class="welcome-card onboarding-card cv-loading-card">
+      <div class="cv-loading-indicator ${complete ? 'is-complete' : ''} ${failed ? 'has-error' : ''}" aria-hidden="true">${complete ? '✓' : failed ? '!' : '<span></span>'}</div>
+      <h1>${failed ? 'Δεν ολοκληρώθηκε η δημιουργία προφίλ' : complete ? 'Το προφίλ δημιουργήθηκε' : '<span>Ο </span><span class="echo-word">Echo</span><span> δημιουργεί το προφίλ σου</span>'}</h1>
+      ${failed ? `<p class="description">${escapeHtml(state.onboardingCvError)}</p>` : ''}
+      ${failed ? '<button class="button-secondary" id="cv-loading-back" type="button">Επιστροφή στο CV</button>' : '<div class="cv-loading-track" aria-hidden="true"><span></span></div>'}
+    </div></section>`;
+  document.querySelector('#cv-loading-back')?.addEventListener('click', () => { state.step = 'onboarding-cv'; render(); });
 }
 
 async function syncProfileIdentity() {
@@ -453,33 +617,30 @@ async function loadProfileSection(identityReady = Promise.resolve()) {
       </article>`;
     };
     const activeItems = items.filter((item) => item.status !== 'rejected');
+    const proposedItems = activeItems.filter((item) => item.status === 'proposed');
+    const confirmedItems = activeItems.filter((item) => ['confirmed', 'corrected'].includes(item.status));
     const rejectedItems = items.filter((item) => item.status === 'rejected');
-    const groups = Object.entries(profileCategoryLabels).map(([category, label]) => {
-      const group = activeItems.filter((item) => item.category === category);
-      return group.length ? `<section class="profile-category-group"><h3>${label}</h3>${group.map(renderItem).join('')}</section>` : '';
+    const totalItems = activeItems.length;
+    const renderGroups = (records) => Object.entries(profileCategoryLabels).map(([category, label]) => {
+      const group = records.filter((item) => item.category === category);
+      return group.length ? `<details class="profile-category-group"><summary class="profile-category-heading"><h3>${label}</h3><span class="profile-toggle-trailing"><span class="profile-item-total ${group.length <= 6 ? 'is-low' : group.length <= 12 ? 'is-medium' : 'is-high'}">${group.length}</span><span class="profile-toggle-icon" aria-hidden="true">+</span></span></summary><div class="profile-category-items">${group.map(renderItem).join('')}</div></details>` : '';
     }).join('');
+    const confirmedGroups = renderGroups(confirmedItems);
+    const proposedGroups = renderGroups(proposedItems);
+    const displayName = identity.display_name || state.name || 'Το προφίλ μου';
 
     root.innerHTML = `
-      <section class="profile-panel">
-        <div class="profile-panel-heading"><div><h2>Ταυτότητα</h2><p>Ο Echo χρησιμοποιεί αυτό το όνομα για να γνωρίζει ποιον εκπροσωπεί.</p></div><span class="profile-confirmed-tag">${identity.identity_confirmed ? 'Επιβεβαιωμένη' : 'Δεν έχει επιβεβαιωθεί'}</span></div>
-        <form id="profile-identity-form" class="profile-inline-form"><label for="profile-display-name">Όνομα</label><input id="profile-display-name" maxlength="48" value="${escapeHtml(identity.display_name || state.name)}" required><button class="button-primary" type="submit">Αποθήκευση</button></form>
+      <section class="profile-overview">
+        <article class="profile-overview-identity"><div class="profile-avatar" aria-hidden="true">${escapeHtml(displayName.slice(0, 1).toUpperCase())}</div><div><span class="profile-kicker">ΤΟ ΠΡΟΦΙΛ ΣΟΥ</span><h2>${escapeHtml(displayName)}</h2><p>Ο Echo χρησιμοποιεί τα εγκεκριμένα στοιχεία για να απαντά εκ μέρους σου.</p></div><span class="profile-confirmed-tag">${identity.identity_confirmed ? 'Ταυτότητα επιβεβαιωμένη' : 'Επιβεβαίωσε την ταυτότητα'}</span></article>
+        <div class="profile-stat-grid"><article class="profile-stat"><strong>${confirmedItems.length}</strong><span>Επιβεβαιωμένα στοιχεία</span></article><article class="profile-stat ${proposedItems.length ? 'has-pending' : ''}"><strong>${proposedItems.length}</strong><span>Προς έλεγχο</span></article></div>
       </section>
-      <section class="profile-panel">
-        <h2>Πώς θέλεις να απαντά ο Echo;</h2><p>Αυτές είναι απλές προτιμήσεις απάντησης· δεν σημαίνουν ότι έχει μάθει το προσωπικό σου ύφος γραφής.</p>
-        <form id="profile-preferences-form" class="profile-preferences-form"><label>Μήκος απάντησης<select name="response_length"><option value="concise" ${identity.response_length === 'concise' ? 'selected' : ''}>Σύντομη</option><option value="detailed" ${identity.response_length === 'detailed' ? 'selected' : ''}>Αναλυτική</option></select></label><label>Τόνος<select name="response_tone"><option value="friendly" ${identity.response_tone === 'friendly' ? 'selected' : ''}>Φιλικός</option><option value="formal" ${identity.response_tone === 'formal' ? 'selected' : ''}>Επίσημος</option></select></label><button class="button-primary" type="submit">Αποθήκευση προτιμήσεων</button></form>
-      </section>
-      <section class="profile-panel">
-        <div class="profile-panel-heading"><div><h2>Προαιρετικό CV ή βιογραφικό</h2><p>Οι πληροφορίες θα εμφανιστούν ως προτάσεις. Το αρχικό αρχείο δεν αποθηκεύεται.</p></div></div>
-        <p id="cv-privacy-message" class="cv-privacy-message">Έλεγχος ενεργής λειτουργίας…</p>
-        <form id="profile-cv-form"><input type="file" id="profile-cv-file" accept=".txt,.pdf,text/plain,application/pdf"><label class="privacy-ack-label"><input type="checkbox" id="cv-privacy-ack">Καταλαβαίνω πού θα επεξεργαστεί το κείμενο του αρχείου.</label><button class="button-primary" id="profile-cv-submit" type="submit" disabled>Εξαγωγή προτάσεων για έλεγχο</button><p id="cv-status" class="mode-status" aria-live="polite"></p></form>
-      </section>
-      <section class="profile-panel">
-        <div class="profile-panel-heading"><div><h2>Τα στοιχεία του προφίλ σου</h2><p>Μόνο τα επιβεβαιωμένα ή διορθωμένα στοιχεία χρησιμοποιούνται στις απαντήσεις.</p></div><button class="button-secondary" id="start-profile-interview" type="button">Σύντομη γνωριμία</button></div>
-        <form id="profile-add-form" class="profile-add-form"><label>Κατηγορία<select name="category">${Object.entries(profileCategoryLabels).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select></label><label for="profile-add-value">Πρόσθεσε ένα στοιχείο</label><textarea id="profile-add-value" name="value" rows="2" maxlength="500" required placeholder="Γράψε μόνο ό,τι θέλεις να θυμάται ο Echo"></textarea><button class="button-primary" type="submit">Προσθήκη στο προφίλ</button></form>
-        ${groups || '<p class="empty-files">Δεν υπάρχουν ακόμη στοιχεία. Μπορείς να ξεκινήσεις τη σύντομη γνωριμία ή να προσθέσεις προαιρετικά CV.</p>'}
-        ${rejectedItems.length ? `<details class="rejected-profile-items"><summary>Απορριφθείσες προτάσεις (${rejectedItems.length})</summary>${rejectedItems.map(renderItem).join('')}</details>` : ''}
-      </section>
-      <div class="profile-danger-zone"><button type="button" class="text-button danger-text" id="delete-profile-all">Διαγραφή όλων των στοιχείων προφίλ</button></div>`;
+      <section class="profile-panel profile-facts-panel"><div class="profile-panel-heading"><div><h2>Τα στοιχεία που γνωρίζει ο Echo</h2><p>Επιβεβαιωμένα στοιχεία.</p></div></div>${confirmedGroups || '<p class="profile-empty-state">Δεν υπάρχουν ακόμη επιβεβαιωμένα στοιχεία.</p>'}</section>
+      <section class="profile-panel profile-review-panel"><div class="profile-panel-heading"><div><h2>Προς έλεγχο</h2><p>Στοιχεία προς έγκριση</p></div><span class="profile-count-badge ${proposedItems.length ? 'has-pending' : ''}">${proposedItems.length}</span></div>${proposedGroups || '<p class="profile-empty-state"><span aria-hidden="true">✓</span> Όλα τα στοιχεία έχουν ελεγχθεί.</p>'}</section>
+      <details class="profile-panel profile-tools-panel"><summary class="profile-toggle"><div><h2>Εμπλούτισε το προφίλ</h2><p>Πρόσθεσε ένα στοιχείο ή ανέβασε το CV σου.</p></div><span class="profile-toggle-trailing"><span class="profile-item-total ${totalItems <= 6 ? 'is-low' : totalItems <= 12 ? 'is-medium' : 'is-high'}">${totalItems}</span><span class="profile-toggle-icon" aria-hidden="true">+</span></span></summary><div class="profile-tools-grid">
+        <section class="profile-tool-card"><h3>Πρόσθεσε στοιχείο</h3><p>Γράψε κάτι που θέλεις να λαμβάνει υπόψη ο Echo.</p><form id="profile-add-form" class="profile-add-form"><label>Κατηγορία<select name="category">${Object.entries(profileCategoryLabels).map(([key, label]) => `<option value="${key}">${label}</option>`).join('')}</select></label><label for="profile-add-value">Πληροφορία</label><textarea id="profile-add-value" name="value" rows="2" maxlength="500" required placeholder="Πρόσθεσε ένα στοιχείο στο προφίλ σου"></textarea><button class="button-primary" type="submit">Προσθήκη στοιχείου</button></form></section>
+        <section class="profile-tool-card"><h3>Ανέβασε CV</h3><p>Το αρχικό αρχείο δεν αποθηκεύεται. Οι προτάσεις θα εμφανιστούν για έλεγχο.</p><p id="cv-privacy-message" class="cv-privacy-message">Έλεγχος ενεργής λειτουργίας…</p><form id="profile-cv-form"><input type="file" id="profile-cv-file" accept=".txt,.pdf,text/plain,application/pdf"><label class="privacy-ack-label"><input type="checkbox" id="cv-privacy-ack">Καταλαβαίνω πού θα επεξεργαστεί το κείμενο του αρχείου.</label><button class="button-primary" id="profile-cv-submit" type="submit" disabled>Εξαγωγή προτάσεων για έλεγχο</button><p id="cv-status" class="mode-status" aria-live="polite"></p></form></section>
+      </div></details>
+      <details class="profile-panel profile-settings-panel"><summary class="profile-toggle"><div><h2>Ρυθμίσεις προφίλ</h2><p>Όνομα και τρόπος απάντησης του Echo.</p></div><span class="profile-toggle-trailing"><span class="profile-item-total ${totalItems <= 6 ? 'is-low' : totalItems <= 12 ? 'is-medium' : 'is-high'}">${totalItems}</span><span class="profile-toggle-icon" aria-hidden="true">+</span></span></summary><div class="profile-settings-grid"><section class="profile-tool-card"><h3>Ταυτότητα</h3><form id="profile-identity-form" class="profile-inline-form"><label for="profile-display-name">Όνομα</label><input id="profile-display-name" maxlength="48" value="${escapeHtml(identity.display_name || state.name)}" required><button class="button-primary" type="submit">Αποθήκευση</button></form></section><section class="profile-tool-card"><h3>Προτιμήσεις απάντησης</h3><p>Επίλεξε το μήκος και τον τόνο που προτιμάς.</p><form id="profile-preferences-form" class="profile-preferences-form"><label>Μήκος απάντησης<select name="response_length"><option value="concise" ${identity.response_length === 'concise' ? 'selected' : ''}>Σύντομη</option><option value="detailed" ${identity.response_length === 'detailed' ? 'selected' : ''}>Αναλυτική</option></select></label><label>Τόνος<select name="response_tone"><option value="friendly" ${identity.response_tone === 'friendly' ? 'selected' : ''}>Φιλικός</option><option value="formal" ${identity.response_tone === 'formal' ? 'selected' : ''}>Επίσημος</option></select></label><button class="button-primary" type="submit">Αποθήκευση προτιμήσεων</button></form></section></div>${rejectedItems.length ? `<details class="rejected-profile-items"><summary>Απορριφθείσες προτάσεις (${rejectedItems.length})</summary>${rejectedItems.map(renderItem).join('')}</details>` : ''}<div class="profile-danger-zone"><button type="button" class="text-button danger-text" id="delete-profile-all">Διαγραφή όλων των στοιχείων προφίλ</button></div></details>`;
 
     document.querySelector('#profile-identity-form').addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -511,13 +672,6 @@ async function loadProfileSection(identityReady = Promise.resolve()) {
       }
       await loadProfileSection();
     }));
-    document.querySelector('#start-profile-interview').addEventListener('click', () => {
-      state.onboardingIndex = 0;
-      state.onboardingAnswers = [];
-      state.onboardingFacts = [];
-      state.step = 'onboarding';
-      render();
-    });
     document.querySelector('#delete-profile-all').addEventListener('click', async () => {
       if (!window.confirm('Να διαγραφούν το όνομα, οι προτιμήσεις και όλα τα στοιχεία προφίλ;')) return;
       await profileRequest('/api/profile', 'DELETE');
@@ -577,10 +731,10 @@ function renderMain() {
   const identityReady = syncProfileIdentity();
   const content = {
     Connection: `<h1>Διασύνδεση</h1><p class="subheading">Ο Echo μπορεί να εξερευνήσει τι αξία μπορείτε να προσφέρετε ο ένας στον άλλον μέσα από τα AI δίδυμά σας. Εσύ επιλέγεις τι μοιράζεσαι.</p><div class="cards"><button class="choice-card"><h3>Σύνδεση με άλλο δίδυμο</h3><p>Σκάναρε ή πληκτρολόγησε τον κωδικό σύνδεσης που θα σου δώσει το άλλο άτομο.</p></button><button class="choice-card"><h3>Προβολή πιθανής συνεργασίας</h3><p>Δες πού συναντιούνται τα ενδιαφέροντα και οι δεξιότητές σας.</p></button></div>`,
-    Guidance: `<h1>Καθοδήγηση</h1><p class="subheading">Συνομίλησε με τον Echo. Κάνε ερωτήσεις με βάση τα αρχεία σου ή για θέματα που σχετίζονται με εσένα.</p><div class="chat-box guidance-question-box"><form id="guidance-form"><label for="guidance-question">Η ερώτησή σου</label><textarea id="guidance-question" required placeholder="Τι θέλεις να αναζητήσεις στα αρχεία σου;"></textarea><button class="button-primary" id="guidance-submit">Ρώτησε τον Echo</button></form></div><div id="guidance-answer" class="guidance-response" aria-live="polite"></div>`,
+    Guidance: `<h1>Καθοδήγηση</h1><p class="subheading">Συνομίλησε με τον Echo. Κάνε ερωτήσεις με βάση τα αρχεία σου ή για θέματα που σχετίζονται με εσένα. Οι συνομιλίες αποθηκεύονται σε αυτή τη συσκευή.</p><div class="chat-box guidance-question-box"><form id="guidance-form"><label for="guidance-question">Η ερώτησή σου</label><textarea id="guidance-question" required placeholder="Τι θέλεις να αναζητήσεις στα αρχεία σου;"></textarea><div class="guidance-form-actions"><button class="button-primary" id="guidance-submit">Ρώτησε τον Echo</button><button class="button-secondary" id="clear-guidance-history" type="button">Νέα συνομιλία</button></div></form></div><div id="guidance-answer" class="guidance-response" aria-live="polite"></div>`,
     Add: `<h1>Πρόσθεσε στοιχεία στον AI εαυτό σου</h1>${state.showFirstFilePrompt ? '<p class="first-file-notice">Ξεκίνα προσθέτοντας το πρώτο σου αρχείο.</p>' : ''}<div class="chat-box"><div class="file-picker-control" id="file-picker-control"><label class="file-picker-label" for="text-files">Επίλεξε αρχεία .txt ή PDF</label><input id="text-files" type="file" accept=".txt,.pdf,text/plain,application/pdf" multiple></div><p class="file-size-hint">Έως 10 MB ανά αρχείο. Τα σαρωμένα PDF χρειάζονται OCR και μπορεί να διαρκέσουν περισσότερο. Η αναγνώριση γίνεται τοπικά.</p><button class="button-primary" id="add-files" type="button">Επεξεργασία αρχείων</button></div><section class="uploaded-files-section"><h2>Τα αρχεία μου</h2><div id="uploaded-files"></div></section>`,
     Graph: `<h1>Ο γράφος σου</h1><p class="subheading">Δες τους ανθρώπους, τους οργανισμούς και τις σχέσεις που εμφανίζονται στα δεδομένα σου.</p>`,
-    Profile: `<h1>Το προφίλ μου</h1><p class="subheading">Εσύ ελέγχεις τι γνωρίζει ο Echo. Επιβεβαίωσε, διόρθωσε ή διέγραψε στοιχεία όποτε θέλεις.</p><div id="profile-page-content" class="profile-page-content">Φόρτωση προφίλ…</div>`,
+    Profile: `<h1>Το προφίλ μου</h1><div id="profile-page-content" class="profile-page-content">Φόρτωση προφίλ…</div>`,
     Settings: '',
   };
 
@@ -601,6 +755,7 @@ function renderMain() {
   document.querySelectorAll('[data-section]').forEach((button) => {
     button.addEventListener('click', () => {
       state.section = button.dataset.section;
+      localStorage.setItem('echoLastSection', state.section);
       render();
       if (['Guidance', 'Connection'].includes(state.section) && !hasSeenSectionPopup(state.section)) {
         showSectionIntro(state.section);
@@ -622,12 +777,12 @@ function renderMain() {
             <p>Γρήγορο, με επεξεργασία δεδομένων στο cloud.</p>
             <small class="mode-note">Τα αρχεία και οι ερωτήσεις επεξεργάζονται στην <strong>OpenAI</strong> με το <strong>API key της ομάδας</strong>. Απαιτείται <strong>internet</strong>· τυχόν χρέωση αφορά τον λογαριασμό που διαχειρίζεται το key.</small>
             <small class="mode-availability" id="openai-availability" aria-live="polite"></small>
-            <small class="mode-privacy">Ταχύτερη επιλογή · Λιγότερη προστασία</small>
+            <small class="mode-privacy">Ταχύτερη επιλογή</small>
           </button>
           <button class="choice-card mode-card" type="button" data-mode-choice="ollama" aria-pressed="false">
             <h3><span>Τοπικά με Ollama</span><small class="active-mode-badge" data-active-badge="ollama" hidden>ΕΝΕΡΓΗ</small></h3>
             <p>Τα αρχεία και οι ερωτήσεις σου επεξεργάζονται <strong>τοπικά</strong>. Η λειτουργία απαιτεί <strong>εγκατάσταση</strong> του τοπικού AI.</p>
-            <small class="mode-privacy">Λιγότερο αποδοτική · Αυξημένη προστασία</small>
+            <small class="mode-privacy">Αυξημένη προστασία</small>
           </button>
         </div>
         <div class="mode-action-row"><div><strong>Αλλαγή λειτουργίας</strong><p>Ο Echo θα προετοιμάσει ξανά τα αρχεία σου. Θα σε ρωτήσουμε πριν ξεκινήσει.</p></div><button id="apply-mode" class="mode-apply-button" type="button">Αλλαγή λειτουργίας <span>→</span></button></div>
@@ -734,8 +889,16 @@ function renderMain() {
     const questionInput = document.querySelector('#guidance-question');
     const submitButton = document.querySelector('#guidance-submit');
     const answerOutput = document.querySelector('#guidance-answer');
+    const clearHistoryButton = document.querySelector('#clear-guidance-history');
+    const renderTurn = (question, answer, sources = []) => `<article class="guidance-turn"><div class="guidance-user-message"><small>Εσύ</small><p>${escapeHtml(question)}</p></div><article class="answer-card"><h2>Απάντηση Echo</h2><p class="answer-text">${escapeHtml(answer)}</p></article>${sources.length ? `<section class="answer-sources"><h3>Πηγές</h3><ul>${sources.map((source) => `<li>${escapeHtml(source.label || source.file || 'Προφίλ')}</li>`).join('')}</ul></section>` : ''}</article>`;
     submitButton.disabled = true;
     questionInput.disabled = true;
+    questionInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        if (!submitButton.disabled && questionInput.value.trim()) document.querySelector('#guidance-form').requestSubmit();
+      }
+    });
     answerOutput.textContent = 'Έλεγχος διαθεσιμότητας λειτουργίας…';
     Promise.all([fetch('/api/config').then((response) => response.json()), identityReady]).then(([config]) => {
       if (config.mode === 'openai' && !config.openai_available) {
@@ -744,8 +907,24 @@ function renderMain() {
       }
       questionInput.disabled = false;
       submitButton.disabled = false;
-      answerOutput.textContent = '';
+      fetch(`/api/chat/history?session_id=${encodeURIComponent(guidanceSessionId)}`).then((response) => response.json()).then(({ messages }) => {
+        const turns = [];
+        for (let index = 0; index < messages.length; index += 2) {
+          if (messages[index]?.role === 'user' && messages[index + 1]?.role === 'assistant') turns.push(renderTurn(messages[index].content, messages[index + 1].content, messages[index + 1].sources || []));
+        }
+        answerOutput.innerHTML = turns.join('');
+      }).catch(() => { answerOutput.textContent = 'Δεν φορτώθηκε το ιστορικό συνομιλίας.'; });
     }).catch(() => { answerOutput.textContent = 'Δεν ήταν δυνατός ο έλεγχος διαθεσιμότητας λειτουργίας.'; });
+    clearHistoryButton.addEventListener('click', async () => {
+      clearHistoryButton.disabled = true;
+      try {
+        const response = await fetch(`/api/chat/history?session_id=${encodeURIComponent(guidanceSessionId)}`, { method: 'DELETE' });
+        if (!response.ok) throw new Error('Δεν διαγράφηκε το ιστορικό.');
+        answerOutput.innerHTML = '';
+        questionInput.value = '';
+      } catch (error) { answerOutput.textContent = error.message || 'Δεν διαγράφηκε το ιστορικό.'; }
+      finally { clearHistoryButton.disabled = false; }
+    });
     document.querySelector('#guidance-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const output = document.querySelector('#guidance-answer');
@@ -753,13 +932,16 @@ function renderMain() {
       const question = questionInput.value.trim();
       submit.disabled = true;
       output.setAttribute('aria-busy', 'true');
-      output.innerHTML = '<div class="thinking-card" role="status"><div class="thinking-label"><span class="thinking-orb" aria-hidden="true"></span><span>Ο Echo σκέφτεται</span><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span></div><div class="thinking-track" aria-hidden="true"><span></span></div></div>';
+      const pending = document.createElement('div');
+      pending.innerHTML = `<article class="guidance-turn"><div class="guidance-user-message"><small>Εσύ</small><p>${escapeHtml(question)}</p></div><article class="answer-card"><h2>Απάντηση Echo</h2><div class="thinking-card" role="status"><div class="thinking-label"><span class="thinking-orb" aria-hidden="true"></span><span>Ο Echo σκέφτεται</span><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span></div><div class="thinking-track" aria-hidden="true"><span></span></div></div></article></article>`;
+      output.append(pending.firstElementChild);
       try {
-        const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question }) });
+        const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, session_id: guidanceSessionId }) });
         const result = await response.json();
         if (!response.ok) throw new Error(result.detail || 'Δεν ολοκληρώθηκε η ερώτηση.');
-        output.innerHTML = `<article class="answer-card"><h2>Απάντηση Echo</h2><p class="answer-text">${escapeHtml(result.answer)}</p></article>${result.sources.length ? `<section class="answer-sources"><h3>Πηγές</h3><ul>${result.sources.map((source) => `<li>${escapeHtml(source.label || source.file || 'Προφίλ')}</li>`).join('')}</ul></section>` : ''}`;
-      } catch (error) { output.textContent = error.message || 'Δεν ολοκληρώθηκε η ερώτηση.'; }
+        pending.firstElementChild.outerHTML = renderTurn(question, result.answer, result.sources || []);
+        questionInput.value = '';
+      } catch (error) { pending.firstElementChild.innerHTML = `<p class="form-error">${escapeHtml(error.message || 'Δεν ολοκληρώθηκε η ερώτηση.')}</p>`; }
       finally { output.setAttribute('aria-busy', 'false'); submit.disabled = false; }
     });
   }
@@ -875,10 +1057,12 @@ function escapeHtml(value) {
 }
 
 function render() {
-  if (state.step === 'welcome') renderWelcome();
+  if (state.step === 'intro' || state.step === 'welcome') renderWelcome();
   else if (state.step === 'name') renderNameStep();
   else if (state.step === 'onboarding') renderOnboarding();
   else if (state.step === 'onboarding-summary') renderOnboardingSummary();
+  else if (state.step === 'onboarding-cv') renderOnboardingCv();
+  else if (state.step === 'onboarding-cv-loading') renderOnboardingCvLoading();
   else renderMain();
 }
 
