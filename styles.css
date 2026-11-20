@@ -131,6 +131,13 @@ label { display: block; margin-top: 30px; color: var(--muted); }
 .guidance-user-message small { color: var(--accent); font-size: 12px; font-weight: 700; }
 .guidance-user-message p { margin: 4px 0 0; white-space: pre-wrap; }
 .guidance-turn .answer-card { box-shadow: none; }
+.retrieval-debug-notice { padding: 10px 14px; border: 1px solid #8a713b; border-radius: 10px; color: #ffcf78; font-size: 13px; }
+.retrieval-debug-panel { padding: 14px 18px; border: 1px dashed #8a713b; border-radius: 12px; background: #18150f; color: var(--muted); font-size: 12px; }
+.retrieval-debug-panel summary { color: #ffcf78; cursor: pointer; font-weight: 700; }
+.retrieval-debug-panel > p { margin: 9px 0; }
+.retrieval-debug-panel ul { display: grid; gap: 10px; margin: 0; padding-left: 20px; }
+.retrieval-debug-panel li strong, .retrieval-debug-panel li span { display: block; }
+.retrieval-debug-panel li p { margin: 4px 0 0; white-space: pre-wrap; }
 .answer-card { padding: clamp(20px, 3vw, 30px); border: 1px solid #343a42; border-radius: 16px; background: linear-gradient(145deg, #171a1f, #111316); box-shadow: 0 14px 34px #0003; }
 .answer-card h2 { margin: 0 0 14px; font-size: 21px; }
 .answer-text { margin: 0; color: var(--text); line-height: 1.75; white-space: pre-wrap; }

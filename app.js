@@ -1,6 +1,7 @@
 const app = document.querySelector('#app');
 const initialParams = new URLSearchParams(location.search);
 const startOnboarding = initialParams.get('onboarding') === '1';
+const retrievalDebugEnabled = initialParams.get('retrieval-debug') === '1';
 const legacyOnboardingUrl = initialParams.get('start') === 'onboarding';
 if (startOnboarding || legacyOnboardingUrl) {
   localStorage.setItem('echoOnboardingDeferred', 'true');
@@ -731,7 +732,7 @@ function renderMain() {
   const identityReady = syncProfileIdentity();
   const content = {
     Connection: `<h1>Διασύνδεση</h1><p class="subheading">Ο Echo μπορεί να εξερευνήσει τι αξία μπορείτε να προσφέρετε ο ένας στον άλλον μέσα από τα AI δίδυμά σας. Εσύ επιλέγεις τι μοιράζεσαι.</p><div class="cards"><button class="choice-card"><h3>Σύνδεση με άλλο δίδυμο</h3><p>Σκάναρε ή πληκτρολόγησε τον κωδικό σύνδεσης που θα σου δώσει το άλλο άτομο.</p></button><button class="choice-card"><h3>Προβολή πιθανής συνεργασίας</h3><p>Δες πού συναντιούνται τα ενδιαφέροντα και οι δεξιότητές σας.</p></button></div>`,
-    Guidance: `<h1>Καθοδήγηση</h1><p class="subheading">Συνομίλησε με τον Echo. Κάνε ερωτήσεις με βάση τα αρχεία σου ή για θέματα που σχετίζονται με εσένα. Οι συνομιλίες αποθηκεύονται σε αυτή τη συσκευή.</p><div class="chat-box guidance-question-box"><form id="guidance-form"><label for="guidance-question">Η ερώτησή σου</label><textarea id="guidance-question" required placeholder="Τι θέλεις να αναζητήσεις στα αρχεία σου;"></textarea><div class="guidance-form-actions"><button class="button-primary" id="guidance-submit">Ρώτησε τον Echo</button><button class="button-secondary" id="clear-guidance-history" type="button">Νέα συνομιλία</button></div></form></div><div id="guidance-answer" class="guidance-response" aria-live="polite"></div>`,
+    Guidance: `<h1>Καθοδήγηση</h1><p class="subheading">Συνομίλησε με τον Echo. Κάνε ερωτήσεις με βάση τα αρχεία σου ή για θέματα που σχετίζονται με εσένα. Οι συνομιλίες αποθηκεύονται σε αυτή τη συσκευή.</p>${retrievalDebugEnabled ? '<p class="retrieval-debug-notice">Λειτουργία διάγνωσης retrieval ενεργή — λεπτομέρειες εμφανίζονται κάτω από κάθε απάντηση.</p>' : ''}<div class="chat-box guidance-question-box"><form id="guidance-form"><label for="guidance-question">Η ερώτησή σου</label><textarea id="guidance-question" required placeholder="Τι θέλεις να αναζητήσεις στα αρχεία σου;"></textarea><div class="guidance-form-actions"><button class="button-primary" id="guidance-submit">Ρώτησε τον Echo</button><button class="button-secondary" id="clear-guidance-history" type="button">Νέα συνομιλία</button></div></form></div><div id="guidance-answer" class="guidance-response" aria-live="polite"></div>`,
     Add: `<h1>Πρόσθεσε στοιχεία στον AI εαυτό σου</h1>${state.showFirstFilePrompt ? '<p class="first-file-notice">Ξεκίνα προσθέτοντας το πρώτο σου αρχείο.</p>' : ''}<div class="chat-box"><div class="file-picker-control" id="file-picker-control"><label class="file-picker-label" for="text-files">Επίλεξε αρχεία .txt ή PDF</label><input id="text-files" type="file" accept=".txt,.pdf,text/plain,application/pdf" multiple></div><p class="file-size-hint">Έως 10 MB ανά αρχείο. Τα σαρωμένα PDF χρειάζονται OCR και μπορεί να διαρκέσουν περισσότερο. Η αναγνώριση γίνεται τοπικά.</p><button class="button-primary" id="add-files" type="button">Επεξεργασία αρχείων</button></div><section class="uploaded-files-section"><h2>Τα αρχεία μου</h2><div id="uploaded-files"></div></section>`,
     Graph: `<h1>Ο γράφος σου</h1><p class="subheading">Δες τους ανθρώπους, τους οργανισμούς και τις σχέσεις που εμφανίζονται στα δεδομένα σου.</p>`,
     Profile: `<h1>Το προφίλ μου</h1><div id="profile-page-content" class="profile-page-content">Φόρτωση προφίλ…</div>`,
@@ -890,7 +891,13 @@ function renderMain() {
     const submitButton = document.querySelector('#guidance-submit');
     const answerOutput = document.querySelector('#guidance-answer');
     const clearHistoryButton = document.querySelector('#clear-guidance-history');
-    const renderTurn = (question, answer, sources = []) => `<article class="guidance-turn"><div class="guidance-user-message"><small>Εσύ</small><p>${escapeHtml(question)}</p></div><article class="answer-card"><h2>Απάντηση Echo</h2><p class="answer-text">${escapeHtml(answer)}</p></article>${sources.length ? `<section class="answer-sources"><h3>Πηγές</h3><ul>${sources.map((source) => `<li>${escapeHtml(source.label || source.file || 'Προφίλ')}</li>`).join('')}</ul></section>` : ''}</article>`;
+    const renderDebug = (debug) => {
+      if (!retrievalDebugEnabled || !debug) return '';
+      const timings = Object.entries(debug.timings_ms || {}).map(([name, value]) => `${name}: ${value} ms`).join(' · ');
+      const candidates = (debug.candidates || []).map((item, index) => `<li><strong>#${index + 1} · ${escapeHtml(item.file)}${item.page ? ` · σελ. ${item.page}` : ''} · score ${item.score}</strong><span>${item.selected ? 'Επιλέχθηκε' : item.eligible ? 'Σχετικό, δεν επιλέχθηκε' : 'Κάτω από το όριο'}</span><p>${escapeHtml(item.text)}</p></li>`).join('');
+      return `<details class="retrieval-debug-panel" open><summary>Debug retrieval · ${escapeHtml(debug.path)} · ${debug.selected_chunks ?? 0} επιλεγμένα</summary><p>${escapeHtml(timings)}</p><ul>${candidates || '<li>Δεν ανακτήθηκαν υποψήφια αποσπάσματα.</li>'}</ul></details>`;
+    };
+    const renderTurn = (question, answer, sources = [], debug = null) => `<article class="guidance-turn"><div class="guidance-user-message"><small>Εσύ</small><p>${escapeHtml(question)}</p></div><article class="answer-card"><h2>Απάντηση Echo</h2><p class="answer-text">${escapeHtml(answer)}</p></article>${sources.length ? `<section class="answer-sources"><h3>Πηγές</h3><ul>${sources.map((source) => `<li>${escapeHtml(source.label || source.file || 'Προφίλ')}</li>`).join('')}</ul></section>` : ''}${renderDebug(debug)}</article>`;
     submitButton.disabled = true;
     questionInput.disabled = true;
     questionInput.addEventListener('keydown', (event) => {
@@ -936,10 +943,10 @@ function renderMain() {
       pending.innerHTML = `<article class="guidance-turn"><div class="guidance-user-message"><small>Εσύ</small><p>${escapeHtml(question)}</p></div><article class="answer-card"><h2>Απάντηση Echo</h2><div class="thinking-card" role="status"><div class="thinking-label"><span class="thinking-orb" aria-hidden="true"></span><span>Ο Echo σκέφτεται</span><span class="thinking-dots" aria-hidden="true"><i></i><i></i><i></i></span></div><div class="thinking-track" aria-hidden="true"><span></span></div></div></article></article>`;
       output.append(pending.firstElementChild);
       try {
-        const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, session_id: guidanceSessionId }) });
+        const response = await fetch('/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question, session_id: guidanceSessionId, debug: retrievalDebugEnabled }) });
         const result = await response.json();
         if (!response.ok) throw new Error(result.detail || 'Δεν ολοκληρώθηκε η ερώτηση.');
-        pending.firstElementChild.outerHTML = renderTurn(question, result.answer, result.sources || []);
+        pending.firstElementChild.outerHTML = renderTurn(question, result.answer, result.sources || [], result.retrieval_debug || null);
         questionInput.value = '';
       } catch (error) { pending.firstElementChild.innerHTML = `<p class="form-error">${escapeHtml(error.message || 'Δεν ολοκληρώθηκε η ερώτηση.')}</p>`; }
       finally { output.setAttribute('aria-busy', 'false'); submit.disabled = false; }
