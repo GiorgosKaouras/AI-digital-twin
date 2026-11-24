@@ -1,9 +1,8 @@
 Όνομα: Γιάννης
-Επώνυμο: Δείγμα
+Επώνυμο: Πέτρου
 Ηλικία: 32
-Email: giannis.deigma@example.test
+Email: giannis.petrou@example.test
 Εργασία: Meridian Systems
 Ρόλος: Data Analyst στην ομάδα Data Insights
 Προσωπικά: Του αρέσει η πεζοπορία, η φωτογραφία δρόμου και τα επιτραπέζια παιχνίδια.
-
 Ο Γιάννης είναι φίλος μου από το πανεπιστήμιο. Εργάζεται στη Meridian Systems, στην ομάδα Data Insights. Η προϊσταμένη του είναι η Σοφία Αντωνίου, η οποία διευθύνει την ομάδα Data Insights.
